@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use tracing::{debug, enabled, Level};
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::device::{Device, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateInfo};
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::VulkanLibrary;
 
 fn main() {
@@ -59,4 +60,22 @@ fn main() {
 
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
     debug!("created memory allocator: {memory_allocator:?}");
+
+    let data = 12i32;
+
+    let buffer = Buffer::from_data(
+        memory_allocator.clone(),
+        BufferCreateInfo {
+            usage: BufferUsage::UNIFORM_BUFFER,
+            ..BufferCreateInfo::default()
+        },
+        AllocationCreateInfo {
+            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+            ..AllocationCreateInfo::default()
+        },
+        data,
+    )
+    .expect("failed to create buffer");
+    debug!("create buffer: {buffer:?}");
 }
