@@ -1,4 +1,5 @@
-use tracing::debug;
+use tracing::{debug, enabled, Level};
+use vulkano::device::QueueFlags;
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::VulkanLibrary;
 
@@ -19,10 +20,20 @@ fn main() {
         .expect("no devices available");
     debug!("chosen physical device: {physical_device:?}");
 
-    for family in physical_device.queue_family_properties() {
-        debug!(
-            "found a queue family with {:?} queue(s)",
-            family.queue_count
-        );
+    if enabled!(Level::DEBUG) {
+        for (pos, family) in physical_device.queue_family_properties().iter().enumerate() {
+            debug!("found a queue family at index {pos}: {family:?}");
+        }
     }
+
+    let queue_family_index = physical_device
+        .queue_family_properties()
+        .iter()
+        .position(|queue_family_property| {
+            queue_family_property
+                .queue_flags
+                .contains(QueueFlags::GRAPHICS)
+        })
+        .expect("couldn't find a graphical queue family");
+    debug!("selected queue family index: {queue_family_index}");
 }
