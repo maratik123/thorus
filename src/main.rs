@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use tracing::{debug, enabled, Level};
 use vulkano::device::{Device, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateInfo};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::VulkanLibrary;
 
 fn main() {
@@ -54,4 +56,7 @@ fn main() {
         .next()
         .expect("at least one queue expected for device");
     debug!("device queue: {queue:?}");
+
+    let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+    debug!("created memory allocator: {memory_allocator:?}");
 }
