@@ -61,28 +61,38 @@ fn main() {
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
     debug!("created memory allocator: {memory_allocator:?}");
 
-    let iter = (0..128).map(|_| 5u8);
+    let source_content: Vec<i32> = (0..64).collect();
 
-    let buffer = Buffer::from_iter(
+    let source = Buffer::from_iter(
         memory_allocator.clone(),
         BufferCreateInfo {
-            usage: BufferUsage::UNIFORM_BUFFER,
+            usage: BufferUsage::TRANSFER_SRC,
             ..BufferCreateInfo::default()
         },
         AllocationCreateInfo {
-            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+            memory_type_filter: MemoryTypeFilter::PREFER_HOST
                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
             ..AllocationCreateInfo::default()
         },
-        iter,
+        source_content,
     )
-    .expect("failed to create buffer");
-    debug!("create buffer: {buffer:?}");
+    .expect("failed to create source buffer");
+    debug!("create source buffer: {source:?}");
 
-    {
-        let mut content = buffer.write().expect("can not lock write on buffer");
-        content[12] = 83;
-        content[7] = 3;
-    }
-    debug!("write to buffer: {buffer:?}");
+    let destination_content: Vec<i32> = (0..64).map(|_| 0i32).collect();
+    let destination = Buffer::from_iter(
+        memory_allocator.clone(),
+        BufferCreateInfo {
+            usage: BufferUsage::TRANSFER_DST,
+            ..BufferCreateInfo::default()
+        },
+        AllocationCreateInfo {
+            memory_type_filter: MemoryTypeFilter::PREFER_HOST
+                | MemoryTypeFilter::HOST_RANDOM_ACCESS,
+            ..AllocationCreateInfo::default()
+        },
+        destination_content,
+    )
+    .expect("failed to create destination buffer");
+    debug!("create destination buffer {destination:?}");
 }
