@@ -1,10 +1,17 @@
 use std::sync::Arc;
 use tracing::{debug, enabled, Level};
-use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::device::{Device, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::VulkanLibrary;
+
+#[derive(BufferContents, Debug)]
+#[repr(C)]
+struct MyStruct {
+    a: u32,
+    b: u32,
+}
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -61,9 +68,9 @@ fn main() {
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
     debug!("created memory allocator: {memory_allocator:?}");
 
-    let iter = (0..128).map(|_| 5u8);
+    let data = MyStruct { a: 5, b: 69 };
 
-    let buffer = Buffer::from_iter(
+    let buffer = Buffer::from_data(
         memory_allocator.clone(),
         BufferCreateInfo {
             usage: BufferUsage::UNIFORM_BUFFER,
@@ -74,8 +81,15 @@ fn main() {
                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
             ..AllocationCreateInfo::default()
         },
-        iter,
+        data,
     )
     .expect("failed to create buffer");
     debug!("create buffer: {buffer:?}");
+
+    {
+        let mut content = buffer.write().expect("can not lock write on buffer");
+        content.a *= 2;
+        content.b = 9;
+    }
+    debug!("write to buffer: {buffer:?}");
 }
