@@ -1,15 +1,21 @@
+use image::{ImageBuffer, Rgba};
 use std::sync::Arc;
 use tracing::{debug, enabled, Level};
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, CopyImageToBufferInfo,
+};
 use vulkano::descriptor_set::allocator::{
     StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo,
 };
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{Device, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
+use vulkano::format::Format;
+use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::compute::ComputePipelineCreateInfo;
@@ -21,6 +27,8 @@ use vulkano::sync::GpuFuture;
 use vulkano::{sync, VulkanLibrary};
 
 fn main() {
+    const PICTURE_SIZE: u32 = 16384;
+
     tracing_subscriber::fmt::init();
 
     let library = VulkanLibrary::new().expect("no local Vulkan library");
@@ -76,23 +84,31 @@ fn main() {
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
     debug!("created memory allocator: {memory_allocator:?}");
 
-    let data_iter = 0u32..65536;
+    let command_buffer_allocator = StandardCommandBufferAllocator::new(
+        device.clone(),
+        StandardCommandBufferAllocatorCreateInfo::default(),
+    );
+    debug!("create command buffer allocator: {command_buffer_allocator:?}");
 
-    let data_buffer = Buffer::from_iter(
+    let image = Image::new(
         memory_allocator.clone(),
-        BufferCreateInfo {
-            usage: BufferUsage::STORAGE_BUFFER,
-            ..BufferCreateInfo::default()
+        ImageCreateInfo {
+            image_type: ImageType::Dim2d,
+            format: Format::R8G8B8A8_UNORM,
+            extent: [PICTURE_SIZE, PICTURE_SIZE, 1],
+            usage: ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+            ..ImageCreateInfo::default()
         },
         AllocationCreateInfo {
-            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
             ..AllocationCreateInfo::default()
         },
-        data_iter,
     )
-    .expect("failed to create data buffer");
-    debug!("create data buffer: {data_buffer:?}");
+    .expect("image creation failed");
+    debug!("image created: {image:?}");
+
+    let view = ImageView::new_default(image.clone()).unwrap();
+    debug!("created image view: {view:?}");
 
     let shader = cs::load(device.clone()).expect("failed to create shader module");
     debug!("loaded shader: {shader:?}");
@@ -128,68 +144,79 @@ fn main() {
     );
     debug!("created descriptor set allocator: {descriptor_set_allocator:?}");
 
-    let pipeline_layout = compute_pipeline.layout();
-    let descriptor_set_layouts = pipeline_layout.set_layouts();
+    let layout = compute_pipeline.layout().set_layouts().first().unwrap();
 
-    let descriptor_set_layout_index = 0;
-    let descriptor_set_layout = descriptor_set_layouts
-        .get(descriptor_set_layout_index)
-        .expect("can not get descriptor set layout");
-    let descriptor_set = PersistentDescriptorSet::new(
+    let set = PersistentDescriptorSet::new(
         &descriptor_set_allocator,
-        descriptor_set_layout.clone(),
-        [WriteDescriptorSet::buffer(0, data_buffer.clone())],
+        layout.clone(),
+        [WriteDescriptorSet::image_view(0, view.clone())],
         [],
     )
     .expect("can not create persistent descriptor set");
 
-    let command_buffer_allocator = StandardCommandBufferAllocator::new(
-        device.clone(),
-        StandardCommandBufferAllocatorCreateInfo::default(),
-    );
-    debug!("create command buffer allocator: {command_buffer_allocator:?}");
+    let buf = Buffer::from_iter(
+        memory_allocator.clone(),
+        BufferCreateInfo {
+            usage: BufferUsage::TRANSFER_DST,
+            ..BufferCreateInfo::default()
+        },
+        AllocationCreateInfo {
+            memory_type_filter: MemoryTypeFilter::PREFER_HOST
+                | MemoryTypeFilter::HOST_RANDOM_ACCESS,
+            ..AllocationCreateInfo::default()
+        },
+        (0..PICTURE_SIZE * PICTURE_SIZE * 4).map(|_| 0u8),
+    )
+    .unwrap();
+    debug!("buffer created: {buf:?}");
 
-    let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
+    let mut builder = AutoCommandBufferBuilder::primary(
         &command_buffer_allocator,
         queue.queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )
-    .expect("failed to create auto command buffer builder");
+    .unwrap();
 
-    let work_group_counts = [1024, 1, 1];
-
-    command_buffer_builder
+    builder
         .bind_pipeline_compute(compute_pipeline.clone())
         .expect("failed to bind compute pipeline")
         .bind_descriptor_sets(
             PipelineBindPoint::Compute,
             compute_pipeline.layout().clone(),
-            descriptor_set_layout_index as u32,
-            descriptor_set,
+            0,
+            set,
         )
         .expect("failed to bind descriptor set")
-        .dispatch(work_group_counts)
-        .expect("failed to dispatch");
+        .dispatch([PICTURE_SIZE / 8, PICTURE_SIZE / 8, 1])
+        .expect("failed to dispatch")
+        .copy_image_to_buffer(CopyImageToBufferInfo::image_buffer(
+            image.clone(),
+            buf.clone(),
+        ))
+        .unwrap();
 
-    let command_buffer = command_buffer_builder
-        .build()
-        .expect("failed to create command buffer");
-    debug!("create auto command buffer");
+    let command_buffer = builder.build().unwrap();
+    debug!("command buffer created");
 
     let future = sync::now(device.clone())
         .then_execute(queue.clone(), command_buffer)
-        .expect("can not execute command buffer")
+        .unwrap()
         .then_signal_fence_and_flush()
-        .expect("can not flush");
-    debug!("executing command buffer");
+        .unwrap();
+    debug!("command buffer executing");
 
-    future.wait(None).expect("can not wait execution");
-    debug!("executed command buffer");
+    future.wait(None).unwrap();
+    debug!("command buffer executed");
 
-    let content = data_buffer.read().expect("can not read data buffer");
-    for (n, val) in content.iter().enumerate() {
-        assert_eq!(*val, n as u32 * 12);
-    }
+    let buffer_content = buf.read().unwrap();
+    let image =
+        ImageBuffer::<Rgba<u8>, _>::from_raw(PICTURE_SIZE, PICTURE_SIZE, &buffer_content[..])
+            .unwrap();
+    debug!("image created");
+
+    image.save("image.png").unwrap();
+    debug!("image saved");
+
     debug!("Everything ok");
 }
 
