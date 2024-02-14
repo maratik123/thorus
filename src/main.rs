@@ -24,7 +24,7 @@ use vulkano::pipeline::{
     ComputePipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::sync::GpuFuture;
-use vulkano::{sync, VulkanLibrary};
+use vulkano::{sync, Version, VulkanLibrary};
 
 fn main() {
     const PICTURE_SIZE: u32 = 16384;
@@ -41,7 +41,7 @@ fn main() {
     let physical_device = instance
         .enumerate_physical_devices()
         .expect("could not enumerate physical devices")
-        .next()
+        .find(|d| d.api_version() >= Version::V1_3)
         .expect("no devices available");
     debug!("chosen physical device: {physical_device:?}");
 
@@ -222,6 +222,8 @@ fn main() {
 
 mod cs {
     vulkano_shaders::shader! {
+        vulkan_version: "1.2",
+        spirv_version: "1.6",
         ty: "compute",
         path: "shader/shader.comp"
     }
