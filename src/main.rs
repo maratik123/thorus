@@ -1,5 +1,6 @@
 use image::{ImageBuffer, Rgba};
 use std::sync::Arc;
+use thorus::shader;
 use tracing::{debug, enabled, Level};
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{
@@ -110,7 +111,7 @@ fn main() {
     let view = ImageView::new_default(image.clone()).unwrap();
     debug!("created image view: {view:?}");
 
-    let shader = cs::load(device.clone()).expect("failed to create shader module");
+    let shader = shader::load(device.clone()).expect("failed to create shader module");
     debug!("loaded shader: {shader:?}");
 
     let cs = shader
@@ -218,13 +219,4 @@ fn main() {
     debug!("image saved");
 
     debug!("Everything ok");
-}
-
-mod cs {
-    vulkano_shaders::shader! {
-        vulkan_version: "1.2",
-        spirv_version: "1.6",
-        ty: "compute",
-        path: "shader/shader.comp"
-    }
 }
