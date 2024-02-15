@@ -216,7 +216,5 @@ fn main() {
     debug!("image created");
 
     image.save("image.png").unwrap();
-    debug!("image saved");
-
     debug!("Everything ok");
 }
