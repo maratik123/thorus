@@ -28,7 +28,7 @@ use vulkano::sync::GpuFuture;
 use vulkano::{sync, Version, VulkanLibrary};
 
 fn main() {
-    const PICTURE_SIZE: u32 = 16384;
+    const PICTURE_SIZE: u32 = 4096;
 
     tracing_subscriber::fmt::init();
 
