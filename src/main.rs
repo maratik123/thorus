@@ -1,6 +1,6 @@
 use image::{ImageBuffer, Rgba};
 use std::sync::Arc;
-use thorus::shader::{fs, vs};
+use thorus::shader::{load_fragment, load_vertex};
 use thorus::vertex::MyVertex;
 use tracing::{debug, enabled, Level};
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
@@ -151,8 +151,11 @@ fn main() {
         },
     )
     .unwrap();
+    debug!("image: {image:?}");
 
     let view = ImageView::new_default(image.clone()).unwrap();
+    debug!("image view: {view:?}");
+
     let framebuffer = Framebuffer::new(
         render_pass.clone(),
         FramebufferCreateInfo {
@@ -161,28 +164,38 @@ fn main() {
         },
     )
     .unwrap();
+    debug!("framebuffer: {framebuffer:?}");
 
-    let vs = vs::load(device.clone()).unwrap();
-    let fs = fs::load(device.clone()).unwrap();
+    let vs = load_vertex(device.clone()).unwrap();
+    debug!("vertex shader: {vs:?}");
+
+    let fs = load_fragment(device.clone()).unwrap();
+    debug!("fragment shader: {fs:?}");
 
     let viewport = Viewport {
         offset: [0.0, 0.0],
         extent: [1024.0, 1024.0],
         depth_range: 0.0..=1.0,
     };
+    debug!("viewport: {viewport:?}");
 
     let pipeline = {
         let vs = vs.entry_point("main").unwrap();
+        debug!("vertex shader entry point: {vs:?}");
+
         let fs = fs.entry_point("main").unwrap();
+        debug!("fragment shader entry point: {fs:?}");
 
         let vertex_input_state = MyVertex::per_vertex()
             .definition(&vs.info().input_interface)
             .unwrap();
+        debug!("vertex input state: {vertex_input_state:?}");
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
             PipelineShaderStageCreateInfo::new(fs),
         ];
+        debug!("stages: {stages:?}");
 
         let layout = PipelineLayout::new(
             device.clone(),
@@ -191,8 +204,10 @@ fn main() {
                 .unwrap(),
         )
         .unwrap();
+        debug!("pipeline layout: {layout:?}");
 
         let subpass = Subpass::from(render_pass.clone(), 0).unwrap();
+        debug!("subpass: {subpass:?}");
 
         GraphicsPipeline::new(
             device.clone(),
@@ -217,6 +232,7 @@ fn main() {
         )
         .unwrap()
     };
+    debug!("graphics pipeline: {pipeline:?}");
 
     let buf = Buffer::new_sized::<[u8; 1024 * 1024 * 4]>(
         memory_allocator.clone(),
@@ -231,6 +247,7 @@ fn main() {
         },
     )
     .unwrap();
+    debug!("buf: {buf:?}");
 
     let mut builder = AutoCommandBufferBuilder::primary(
         &command_buffer_allocator,
@@ -273,7 +290,11 @@ fn main() {
     future.wait(None).unwrap();
 
     let buffer_content = buf.read().unwrap();
+    debug!("buffer content gathered");
+
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(1024, 1024, &buffer_content[..]).unwrap();
+    debug!("image created");
+
     image.save("image.png").unwrap();
 
     debug!("Everything ok");
