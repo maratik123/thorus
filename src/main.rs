@@ -155,7 +155,7 @@ fn main() {
     )
     .expect("can not create persistent descriptor set");
 
-    let buf = Buffer::from_iter(
+    let buf = Buffer::new_sized::<[u8; (PICTURE_SIZE * PICTURE_SIZE * 4) as usize]>(
         memory_allocator.clone(),
         BufferCreateInfo {
             usage: BufferUsage::TRANSFER_DST,
@@ -166,7 +166,6 @@ fn main() {
                 | MemoryTypeFilter::HOST_RANDOM_ACCESS,
             ..AllocationCreateInfo::default()
         },
-        (0..PICTURE_SIZE * PICTURE_SIZE * 4).map(|_| 0u8),
     )
     .unwrap();
     debug!("buffer created: {buf:?}");
