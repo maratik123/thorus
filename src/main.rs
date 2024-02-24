@@ -30,16 +30,6 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
 use vulkano::sync::GpuFuture;
 use vulkano::{sync, Version, VulkanLibrary};
 
-const VERTEX1: MyVertex = MyVertex {
-    position: [-0.5, -0.5],
-};
-const VERTEX2: MyVertex = MyVertex {
-    position: [0.0, 0.5],
-};
-const VERTEX3: MyVertex = MyVertex {
-    position: [0.5, -0.25],
-};
-
 fn main() {
     tracing_subscriber::fmt::init();
 
@@ -113,7 +103,17 @@ fn main() {
                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
             ..AllocationCreateInfo::default()
         },
-        [VERTEX1, VERTEX2, VERTEX3],
+        [
+            MyVertex {
+                position: [-0.5, -0.5],
+            },
+            MyVertex {
+                position: [0.0, 0.5],
+            },
+            MyVertex {
+                position: [0.5, -0.25],
+            },
+        ],
     )
     .unwrap();
     debug!("vertex buffer: {vertex_buffer:?}");
