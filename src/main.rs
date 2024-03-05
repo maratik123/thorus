@@ -1,8 +1,9 @@
 use image::{ImageBuffer, Rgba};
+use std::ffi::c_long;
 use std::sync::Arc;
 use thorus::shader::{load_fragment, load_vertex};
 use thorus::vertex::MyVertex;
-use tracing::{debug, enabled, Level};
+use tracing::debug;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
@@ -11,7 +12,8 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, CopyImageToBufferInfo, RenderPassBeginInfo,
     SubpassBeginInfo, SubpassContents, SubpassEndInfo,
 };
-use vulkano::device::{Device, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo, QueueFlags};
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
@@ -27,56 +29,96 @@ use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
+use vulkano::swapchain::{Surface, SurfaceInfo, Swapchain, SwapchainCreateInfo};
 use vulkano::sync::GpuFuture;
 use vulkano::{sync, Version, VulkanLibrary};
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
 
 fn main() {
     tracing_subscriber::fmt::init();
 
+    let event_loop = EventLoop::new();
+    debug!("event loop created");
+
     let library = VulkanLibrary::new().expect("no local Vulkan library");
     debug!("initialized library: {library:?}");
 
-    let instance =
-        Instance::new(library, InstanceCreateInfo::default()).expect("failed to create instance");
+    let required_extensions = Surface::required_extensions(&event_loop);
+
+    let instance = Instance::new(
+        library,
+        InstanceCreateInfo {
+            enabled_extensions: required_extensions,
+            ..InstanceCreateInfo::default()
+        },
+    )
+    .expect("failed to create instance");
     debug!("initialized instance: {instance:?}");
 
-    let physical_device = instance
-        .enumerate_physical_devices()
-        .expect("could not enumerate physical devices")
-        .find(|d| d.api_version() >= Version::V1_3)
-        .expect("no devices available");
+    let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
+    debug!("window created");
+
+    let surface = Surface::from_window(instance.clone(), window.clone()).unwrap();
+    debug!("surface created");
+
+    let device_extensions = DeviceExtensions {
+        khr_swapchain: true,
+        ..DeviceExtensions::default()
+    };
+
+    let (physical_device, queue_family_index) =
+        select_physical_device(&instance, &surface, &device_extensions);
     debug!("chosen physical device: {physical_device:?}");
-
-    if enabled!(Level::DEBUG) {
-        for (pos, family) in physical_device.queue_family_properties().iter().enumerate() {
-            debug!("found a queue family with property at index {pos}: {family:?}");
-        }
-    }
-
-    let queue_family_index = physical_device
-        .queue_family_properties()
-        .iter()
-        .position(|queue_family_properties| {
-            queue_family_properties
-                .queue_flags
-                .contains(QueueFlags::COMPUTE | QueueFlags::GRAPHICS)
-        })
-        .expect("couldn't find a compute and graphics queue family")
-        as u32;
     debug!("selected queue family index: {queue_family_index}");
 
     let (device, mut queues) = Device::new(
-        physical_device,
+        physical_device.clone(),
         DeviceCreateInfo {
             queue_create_infos: vec![QueueCreateInfo {
                 queue_family_index,
                 ..QueueCreateInfo::default()
             }],
+            enabled_extensions: device_extensions,
             ..DeviceCreateInfo::default()
         },
     )
     .expect("failed to create device");
     debug!("created device: {device:?}");
+
+    let caps = physical_device
+        .surface_capabilities(&surface, SurfaceInfo::default())
+        .expect("failed to get surface capabilities");
+    debug!("surface capabilities: {caps:?}");
+
+    let dimensions = window.inner_size();
+    debug!("dimensions: {dimensions:?}");
+
+    let composite_alpha = caps.supported_composite_alpha.into_iter().next().unwrap();
+    debug!("composite alpha: {composite_alpha:?}");
+
+    let image_format = physical_device
+        .surface_formats(&surface, SurfaceInfo::default())
+        .unwrap()
+        .first()
+        .unwrap()
+        .0;
+    debug!("image format: {image_format:?}");
+
+    let (mut swapchain, images) = Swapchain::new(
+        device.clone(),
+        surface.clone(),
+        SwapchainCreateInfo {
+            min_image_count: caps.min_image_count + 1,
+            image_format,
+            image_extent: dimensions.into(),
+            image_usage: ImageUsage::COLOR_ATTACHMENT,
+            composite_alpha,
+            ..SwapchainCreateInfo::default()
+        },
+    )
+    .unwrap();
 
     let queue = queues
         .next()
@@ -135,6 +177,16 @@ fn main() {
     )
     .unwrap();
     debug!("render_pass: {render_pass:?}");
+
+    event_loop.run(|event, _, control_flow| match event {
+        Event::WindowEvent {
+            event: WindowEvent::CloseRequested,
+            ..
+        } => {
+            *control_flow = ControlFlow::Exit;
+        }
+        _ => (),
+    });
 
     let image = Image::new(
         memory_allocator.clone(),
@@ -298,4 +350,34 @@ fn main() {
     image.save("image.png").unwrap();
 
     debug!("Everything ok");
+}
+
+fn select_physical_device(
+    instance: &Arc<Instance>,
+    surface: &Arc<Surface>,
+    device_extensions: &DeviceExtensions,
+) -> (Arc<PhysicalDevice>, u32) {
+    instance
+        .enumerate_physical_devices()
+        .expect("could not enumerate physical devices")
+        .filter(|d| d.api_version() >= Version::V1_3)
+        .filter(|d| d.supported_extensions().contains(&device_extensions))
+        .filter_map(|d| {
+            d.queue_family_properties()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, q)| {
+                    Some(i as u32).filter(|_| q.queue_flags.contains(QueueFlags::GRAPHICS))
+                })
+                .find(|&i| d.surface_support(i, &surface).unwrap_or(false))
+                .map(|i| (d, i))
+        })
+        .max_by_key(|(d, _)| match d.properties().device_type {
+            PhysicalDeviceType::DiscreteGpu => 0,
+            PhysicalDeviceType::IntegratedGpu => 1,
+            PhysicalDeviceType::VirtualGpu => 2,
+            PhysicalDeviceType::Cpu => 3,
+            _ => 4,
+        })
+        .expect("no devices available")
 }
