@@ -32,12 +32,14 @@ use vulkano::shader::ShaderModule;
 use vulkano::swapchain::{
     Surface, SurfaceInfo, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo,
 };
+use vulkano::sync::future::FenceSignalFuture;
 use vulkano::sync::GpuFuture;
 use vulkano::{swapchain, sync, Validated, Version, VulkanError, VulkanLibrary};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 
+#[allow(clippy::arc_with_non_send_sync)]
 fn main() {
     tracing_subscriber::fmt::init();
 
@@ -121,6 +123,8 @@ fn main() {
         },
     )
     .unwrap();
+    debug!("swapchain: {swapchain:?}");
+    debug!("images: {images:?}");
 
     let queue = queues
         .next()
@@ -202,6 +206,12 @@ fn main() {
     let mut window_resized = false;
     let mut recreate_swapchain = false;
 
+    let frames_in_flight = images.len();
+    let mut fences: Vec<Option<Arc<FenceSignalFuture<_>>>> = vec![None; frames_in_flight];
+    let mut previous_fence_i = 0;
+
+    let mut cleanup_counter = vec![0; frames_in_flight];
+
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
             event: WindowEvent::CloseRequested,
@@ -261,10 +271,21 @@ fn main() {
                     }
                     Err(e) => panic!("failed to acquire next image: {e}", e = e),
                 };
+
             if suboptimal {
                 recreate_swapchain = true;
             }
-            let execution = sync::now(device.clone())
+
+            if let Some(image_fence) = &fences[image_i as usize] {
+                image_fence.wait(None).unwrap();
+            }
+
+            let previous_future = match fences[previous_fence_i as usize].clone() {
+                None => sync::now(device.clone()).boxed(),
+                Some(fence) => fence.boxed(),
+            };
+
+            let future = previous_future
                 .join(acquire_future)
                 .then_execute(queue.clone(), command_buffers[image_i as usize].clone())
                 .unwrap()
@@ -274,17 +295,27 @@ fn main() {
                 )
                 .then_signal_fence_and_flush();
 
-            match execution.map_err(Validated::unwrap) {
-                Ok(future) => {
-                    future.wait(None).unwrap();
-                }
+            fences[image_i as usize] = match future.map_err(Validated::unwrap) {
+                Ok(mut value) => Some(Arc::new({
+                    let cleanup_counter = &mut cleanup_counter[image_i as usize];
+                    if *cleanup_counter >= 1_024 {
+                        value.cleanup_finished();
+                        *cleanup_counter = 0;
+                    } else {
+                        *cleanup_counter += 1;
+                    }
+                    value
+                })),
                 Err(VulkanError::OutOfDate) => {
                     recreate_swapchain = true;
+                    None
                 }
                 Err(e) => {
                     warn!("failed to flush future: {e}");
+                    None
                 }
-            }
+            };
+            previous_fence_i = image_i;
         }
         _ => (),
     });
@@ -438,7 +469,7 @@ fn get_command_buffers(
             builder
                 .begin_render_pass(
                     RenderPassBeginInfo {
-                        clear_values: vec![Some([0.1, 0.1, 0.1, 1.0].into())],
+                        clear_values: vec![Some([0.3, 0.3, 0.3, 1.0].into())],
                         ..RenderPassBeginInfo::framebuffer(framebuffer.clone())
                     },
                     SubpassBeginInfo {
